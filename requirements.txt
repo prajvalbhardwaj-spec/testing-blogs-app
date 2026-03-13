@@ -3,9 +3,9 @@ uvicorn
 sqlalchemy
 psycopg2-binary
 python-dotenv
-alembic
-bcrypt
 pydantic
-pydantic-settings
 email-validator
+bcrypt
+alembic
+gunicorn
 python-jose

@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -7,65 +8,36 @@ load_dotenv()
 
 from app.database import engine, SessionLocal, Base
 from app import models
-from app.auth import hash_password
+from app.seed import run_seed
 from app.routers import auth, users, blogs
 
-# ── Create all tables ──────────────────────────────────────────────────────────
-Base.metadata.create_all(bind=engine)
 
+# ── Lifespan: runs on startup ──────────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 1. Create all tables
+    Base.metadata.create_all(bind=engine)
+    print("Tables created")
 
-# ── Seed dummy data ────────────────────────────────────────────────────────────
-def seed_data():
+    # 2. Seed dummy data if tables are empty
     db = SessionLocal()
     try:
-        if db.query(models.User).count() == 0:
-            user1 = models.User(
-                username="alice",
-                email="alice@example.com",
-                hashed_password=hash_password("password123"),
-            )
-            user2 = models.User(
-                username="bob",
-                email="bob@example.com",
-                hashed_password=hash_password("password123"),
-            )
-            db.add_all([user1, user2])
-            db.flush()
-
-            blog1 = models.Blog(
-                title="Welcome to the Blog",
-                content="This is Alice's first blog post. Hello world!",
-                owner_id=user1.id,
-            )
-            blog2 = models.Blog(
-                title="Getting Started with FastAPI",
-                content="FastAPI is a modern, fast web framework for building APIs with Python.",
-                owner_id=user1.id,
-            )
-            blog3 = models.Blog(
-                title="Bob's Thoughts",
-                content="Here are some of Bob's thoughts on technology and life.",
-                owner_id=user2.id,
-            )
-            db.add_all([blog1, blog2, blog3])
-            db.commit()
-            print("✅ Dummy data seeded successfully.")
-        else:
-            print("ℹ️  Data already exists, skipping seed.")
+        run_seed(db)
     except Exception as e:
+        print(f"Seed error: {e}")
         db.rollback()
-        print(f"❌ Seed error: {e}")
     finally:
         db.close()
 
+    yield  # App runs here
 
-seed_data()
 
 # ── App ────────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Blog API",
     description="A FastAPI blog application with JWT authentication",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
@@ -95,3 +67,19 @@ app.include_router(blogs.router)
 @app.get("/", tags=["Health"])
 def root():
     return {"message": "API is running"}
+
+
+# ── Manual seed endpoint ───────────────────────────────────────────────────────
+@app.post("/seed", tags=["Health"])
+def seed_endpoint():
+    db = SessionLocal()
+    try:
+        seeded = run_seed(db)
+        if seeded:
+            return {"message": "Database seeded!"}
+        return {"message": "Already seeded, skipping"}
+    except Exception as e:
+        db.rollback()
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+    finally:
+        db.close()
